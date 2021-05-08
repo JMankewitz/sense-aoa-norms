@@ -1,0 +1,196 @@
+---
+title: "01_Descriptive_Analyses"
+author: "Jessica Mankewitz"
+date: "3/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Descriptive Analyses & Plots
+
+This notebook will walk through the demographic 
+## Setup
+
+```{r}
+#for plotting
+library(ggplot2)
+library(patchwork)
+
+
+library(tidyverse)
+
+set.seed(1000)
+
+read_path <- here("data/processed_data/")
+write_path <- here("data/derived_data/")
+fig_path <- here("figures/")
+```
+
+### Read in data
+```{r message=FALSE, warning=FALSE}
+attention_checks.df <- read_csv(file = paste0(read_path, "raw_attention_checks.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_lemma_estimations.df <- read_csv(file = paste0(read_path, "raw_lemma_estimations.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_sense_estimations.df <- read_csv(file = paste0(read_path, "raw_sense_estimations.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_demographics <- read_csv(paste0(read_path, "demographics.csv"))
+```
+
+```{r}
+# Drop any participant who failed at least one attention check
+
+#no, we want to KEEP participants who passed their checks, so we also drop people who never got to them :)
+failed_attention_participants <-raw_demographics %>% select(participant_id, finished) %>% left_join(attention_checks.df) %>% 
+  filter(aoa != "7" | is.na(aoa)) %>% distinct(participant_id) %>% deframe()
+
+#Drop participants who learned english at a later age
+dropped_non_eng_fl <- raw_demographics %>% filter(eng_first_lang != "Yes") %>%
+  distinct(participant_id) %>% deframe()
+
+lemma_estimations.df <- raw_lemma_estimations.df %>% 
+  filter(!participant_id %in% failed_attention_participants,
+         !participant_id %in% dropped_non_eng_fl)
+sense_estimations.df <- raw_sense_estimations.df %>% 
+  filter(!participant_id %in% failed_attention_participants,
+         !participant_id %in% dropped_non_eng_fl)
+demographics.df <- raw_demographics %>%
+  filter(!participant_id %in% failed_attention_participants)
+```
+
+## Participant Demographics
+
+### Age
+```{r}
+demographics.df %>% 
+  mutate(age_bin = cut(age, breaks = c(0, 18, 20,25, 50, 100), include.lowest = TRUE)) %>%
+  ggplot(aes(x = age_bin)) +
+  geom_bar() + 
+  facet_wrap(~study_name, scales = "free")
+```
+### Parent Status
+```{r}
+demographics.df %>% 
+  ggplot(aes(x = parent)) +
+  geom_bar() + 
+  facet_wrap(~study_name, scales = "free")
+```
+
+### Completion Time
+```{r}
+demographics.df %>% filter(finished) %>%
+  mutate(duration_in_minutes = duration_in_seconds/60) %>%
+    filter(duration_in_minutes < 1000) %>%
+  ggplot(aes(x = duration_in_minutes)) +
+  geom_density() + 
+  facet_wrap(~study_name, scales = "free")
+```
+
+```{r}
+demographics.df %>% group_by(study_name) %>%
+  summarise(med_duration  = median(duration_in_seconds/60))
+```
+
+```{r}
+demographics.df%>% left_join(raw_sense_estimations.df) %>% filter(finished) %>%
+  group_by(participant_id, study_name) %>%
+  summarize(num_senses = n_distinct(sense_name),
+            num_minutes = unique(duration_in_seconds)/60,
+            senses_per_minute = num_senses/num_minutes) %>%
+  ggplot(aes(x = senses_per_minute)) +
+  geom_density(adjust = 1) + 
+  facet_wrap(~study_name, scales = "free")
+```
+```{r}
+demographics.df%>% left_join(raw_lemma_estimations.df) %>% filter(finished) %>%
+  group_by(participant_id, study_name) %>%
+  summarize(num_lemmas = n_distinct(lemma),
+            num_minutes = unique(duration_in_seconds)/60,
+            lemmas_per_minute = num_lemmas/num_minutes) %>%
+  ggplot(aes(x = lemmas_per_minute)) +
+  geom_density() + 
+  facet_wrap(~study_name, scales = "free")
+```
+### First Language
+```{r}
+demographics.df %>% filter(finished) %>%
+  ggplot(aes(x = eng_first_lang)) +
+  geom_bar() + 
+  facet_wrap(~study_name, scales = "free")
+```
+
+### Gender
+```{r}
+demographics.df %>% filter(finished) %>%
+  ggplot(aes(x = gender)) +
+  geom_bar() + 
+  facet_wrap(~study_name, scales = "free")
+```
+
+### Education
+```{r}
+demographics.df %>% filter(finished) %>%
+  ggplot(aes(x = education_level)) +
+  geom_bar() + 
+  facet_wrap(~study_name, scales = "free") + coord_flip()
+```
+
+## Number of responses
+```{r}
+raw_sense_estimations.df %>%
+  group_by(participant_id, study_name) %>%
+  summarize(num_senses = n()) %>% ggplot(aes(x = num_senses)) + geom_histogram() + facet_wrap(~study_name, scales = "free")
+```
+```{r}
+calibration <- c("calib_glue_1", "calib_ball_3", "calib_stone_2", "calib_puppy_1", 
+                 "attn_sock_1", "attn_cake_1", "attn_sandbox_1")
+
+raw_lemma_estimations.df %>%
+  #filter(!group %in% calibration) %>%
+  group_by(participant_id, study_name) %>%
+  summarize(num_lemmas = n()) %>% 
+  ggplot(aes(x = num_lemmas)) + geom_histogram(binwidth = 1) + 
+  facet_wrap(~study_name, scales = "free_y") + 
+  ylab("participants")
+```
+## Estimation Counts per Sense/Lemma
+
+```{r}
+#break is overrepresented because it has the most senses, so itll be sampled more often
+#min is "bite" at 6 estimations - not bad!
+lemma_estimations.df %>% 
+  group_by(lemma, study_name) %>% 
+  summarize(num_estimations = n()) %>%
+  ggplot() + geom_histogram(aes(x = num_estimations), binwidth = 5) +
+  facet_wrap(~study_name, scales = "free")
+```
+```{r}
+num_idk <- sense_estimations.df %>% group_by(lemma, sense_name, definition, example, example_source) %>% 
+  summarize(prop_idk = sum(ifelse(aoa == "x", 1, 0))/n(),
+            total_estimations = n())
+
+sense_estimations.df %>% 
+  filter(study_name == "sp",
+         aoa != "x") %>% 
+  mutate(aoa = as.numeric(aoa)) %>%
+  group_by(lemma, sense_name, definition, example) %>% 
+  summarize(num_estimations = n(), mean_aoa = mean(aoa)) %>% ungroup() %>%
+  group_by(sense_name) %>%
+  mutate(num_lemmas = n()) %>% ungroup() %>% arrange(-num_estimations, sense_name)
+```
+
+```{r}
+sense_estimations.df%>% distinct(sense_name, lemma, example_source) %>% ggplot() + geom_bar(aes(x = example_source), stat = "count")
+```
+```{r}
+#does the source of the example effect the mean aoa?
+library(lme4)
+lm(mean_aoa ~ example_source,
+     data = sense_estimations.df %>% mutate(num_aoa = as.numeric(aoa)) %>% group_by(lemma, sense_name, example_source) %>%
+       summarize(mean_aoa = mean(num_aoa, na.rm = TRUE)))
+
+#why isnt example_sourcechildes here?
+```
+

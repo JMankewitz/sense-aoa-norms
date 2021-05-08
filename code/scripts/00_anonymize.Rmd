@@ -1,0 +1,64 @@
+---
+title: "00_do_preprocessing"
+author: "Jessica Mankewitz"
+date: "2/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+```{r}
+library(here)
+library(tidyverse)
+```
+
+General outline:
+1. Read in CSVs across all studies
+2. Create new participant IDs
+3. Create and save participant ID remap
+
+# Helper function
+```{r}
+anonymize_data <- function(file_name, study_name){
+  pid_path = here("data/raw_data/raw_data_pid")
+  clean_path = here("data/raw_data")
+  print(here(pid_path, file_name))
+  
+  raw_qualtrics <- read_csv(here(pid_path, file_name))
+  
+ clean_qualtrics <- raw_qualtrics %>% mutate(study_name = study_name,
+                                            participant_num = seq(1, nrow(.))-3,
+                                            participant_id = paste(study_name, 
+                                                                   participant_num, 
+                                                                   sep = "_"))
+ 
+ # save map 
+ clean_qualtrics %>% select(prolific_id, participant_id) %>% 
+  write_csv(file = here(pid_path, paste0(gsub(".csv", "", file_name), "_map.csv")))
+ 
+ #save clean version
+ final_version <- clean_qualtrics %>% select(study_name, participant_id, everything()) %>%
+  select(-c(StartDate:Progress), -c(RecordedDate:UserLanguage), -c(prolific_id))
+ 
+ final_version %>%
+  write_csv(file = here(clean_path,paste0(gsub("_pid.csv", "", file_name), ".csv")))
+ 
+ if ("SESSION_ID" %in% colnames(final_version)) {
+   final_version %>%
+  select(-c(PROLIFIC_PID:SESSION_ID)) %>%
+  write_csv(file = here(clean_path,paste0(gsub("_pid.csv", "", file_name), ".csv")))
+ }
+ return(final_version)
+}
+```
+
+# Read in Raw Data w/ PID
+```{r}
+pid_files <- list.files(here("data/raw_data/raw_data_pid"), pattern = "*_pid.csv")
+study_names <- c("pro_pilot", "sp_pilot", "sp")
+
+mapply(anonymize_data, pid_files, study_names)
+```

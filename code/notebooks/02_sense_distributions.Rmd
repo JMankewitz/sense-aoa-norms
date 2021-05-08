@@ -1,0 +1,187 @@
+---
+title: "02_sense_distributions"
+author: "Jessica Mankewitz"
+date: "5/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+```{r setup}
+library(here)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+library(rcompanion)
+
+set.seed(1000)
+
+read_path <- here("data/processed_data/")
+write_path <- here("data/derived_data/")
+fig_path <- here("figures/")
+```
+# Read in Data
+```{r message=FALSE, warning=FALSE}
+attention_checks.df <- read_csv(file = paste0(read_path, "raw_attention_checks.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_lemma_estimations.df <- read_csv(file = paste0(read_path, "raw_lemma_estimations.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_sense_estimations.df <- read_csv(file = paste0(read_path, "raw_sense_estimations.csv"),
+                                col_types = cols(aoa = col_character()))
+raw_demographics <- read_csv(paste0(read_path, "demographics.csv"))
+```
+
+# Drop attention checks
+```{r}
+# Drop any participant who failed at least one attention check
+failed_attention_participants <-raw_demographics %>% select(participant_id, finished) %>% left_join(attention_checks.df) %>% 
+  filter(aoa != "7" | is.na(aoa)) %>% distinct(participant_id) %>% deframe()
+
+dropped_non_eng_fl <- raw_demographics %>% filter(eng_first_lang != "Yes") %>%
+  distinct(participant_id) %>% deframe()
+
+lemma_estimations.df <- raw_lemma_estimations.df %>% 
+  filter(!participant_id %in% failed_attention_participants,
+         !participant_id %in% dropped_non_eng_fl)
+sense_estimations.df <- raw_sense_estimations.df %>% 
+  filter(!participant_id %in% failed_attention_participants,
+         !participant_id %in% dropped_non_eng_fl)
+demographics.df <- raw_demographics %>%
+  filter(!participant_id %in% failed_attention_participants)
+```
+
+# Counts Per sense lemma 
+
+```{r}
+
+#get pos
+get_pos <- function(sense_name){
+  return(gsub(".*[.]([^.]+)[.].*", "\\1", sense_name))
+}
+sense_estimations.df$pos <- unlist(lapply(sense_estimations.df$sense_name, get_pos))
+#first get count before dropping idk
+mean_aoa_for_sense <- sense_estimations.df %>% 
+  mutate(num_aoa = as.numeric(aoa)) %>%
+  group_by(sense_name, pos,lemma, definition, example, example_source) %>%
+  mutate(num_all_estimations = n_distinct(participant_id)) %>%
+  filter(!is.na(num_aoa)) %>%
+  mutate(num_estimations = n_distinct(participant_id),
+         proportion_idk = 1 - (num_estimations/num_all_estimations)) %>%
+  group_by(sense_name, pos,lemma, definition, example, example_source, num_all_estimations, num_estimations, proportion_idk) %>%
+  summarize(mean_estimation = mean(num_aoa, na.rm = TRUE),
+            sd_estimation = sd(num_aoa, na.rm=TRUE))
+
+mean_aoa_for_sense %>% ggplot(aes(x = proportion_idk, y = mean_estimation)) + geom_point(alpha = .5)+
+  geom_smooth(method = "lm", formula = y~x)
+mean_aoa_for_sense %>% ggplot() + geom_histogram(aes(x = proportion_idk))+ theme_classic()+ xlab("Proportion Marked I Dont Know") + ylab("Sense Count")
+mean_aoa_for_sense %>% ggplot() + geom_density(aes(x = mean_estimation)) + theme_classic()+facet_wrap(~pos)
+mean_aoa_for_sense %>% ggplot() + geom_histogram(aes(x = mean_estimation)) + theme_classic()+facet_wrap(~pos)
+
+```
+
+```{r}
+mean_aoa_for_sense %>% mutate(no_idk = proportion_idk == 0) %>% pull(no_idk) %>% table()
+mean_aoa_for_sense %>% ggplot() + geom_histogram(aes(x = num_all_estimations), binwidth = 1) + xlim(c(0,20))
+```
+
+```{r}
+library(tidytext)
+calibration_groups <- c("calib_glue_1", "calib_ball_3", "calib_stone_2", "calib_puppy_1")
+attention_groups <- c("attn_sock_1", "attn_cake_1", "attn_sandbox_1") 
+
+shared_estimations_with_mean <- sense_estimations.df%>% select(group, lemma, sense_name, aoa) %>%
+  rbind(lemma_estimations.df %>% mutate(sense_name = "lemma") %>% select(group, lemma, sense_name, aoa)) %>%
+  filter(group %in% append(calibration_groups, attention_groups)) %>% 
+  mutate(num_aoa = as.numeric(aoa))  %>%
+  filter(!is.na(num_aoa)) %>%
+  group_by(sense_name, lemma) %>% mutate(mean_aoa = mean(num_aoa, rm.na = TRUE),
+                                         sd_aoa = sd(num_aoa)) %>% ungroup() %>%
+  mutate(mean_aoa = ifelse(sense_name == "lemma", 0, mean_aoa),
+         lemma_bool = ifelse(sense_name == "lemma", TRUE, FALSE),
+         sense_name = reorder_within(sense_name, - mean_aoa, lemma))
+
+shared_estimations_with_mean %>% ggplot(aes(y = num_aoa, x = sense_name,  fill = lemma)) + 
+  geom_flat_violin(position = position_nudge(x = 0, y = 0), adjust = 1.5, alpha = .25) + coord_flip() + 
+  geom_point(aes(color = lemma), 
+             position = position_jitter(height = .25, width = .1), 
+             size = .5,
+             alpha = .1) + 
+  #geom_boxplot(width = .1, outlier.shape = NA, alpha = .5) + 
+  theme_classic() +
+  scale_x_reordered() + facet_grid(rows = vars(lemma), scales = "free_y") +
+  labs(y = "AoA Estimation",
+       x = NULL,
+       title = "Sense AoA Distrbutions",
+       subtitle = "Across senses shared by all participants") + 
+  scale_alpha_manual(values = c(.5, 1))# + scale_x_discrete(expand = c(0.01, 0)) 
+```
+
+```{r}
+set.seed(100)
+random_participants <- sample(unique(sense_estimations.df$participant_id), 10)
+sense_estimations.df %>% filter(participant_id %in% random_participants) %>% 
+  mutate(num_aoa = as.numeric(aoa)) %>%
+  filter(group %in% append(calibration_groups, attention_groups)) %>% 
+  ggplot(aes(y = num_aoa, x = participant_id,  fill = participant_id)) + 
+  geom_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5, adjust = 1.5) + coord_flip() + 
+  geom_point(aes(color = participant_id), 
+             position = position_jitter(height = .25, width = .1), 
+             size = .5,
+             alpha = .5) + 
+  #geom_boxplot(width = .1, outlier.shape = NA, alpha = .5) + 
+  theme_classic() +
+  scale_x_reordered()+
+  labs(y = "AoA Estimation",
+       x = NULL,
+       title = "Distribution of Estimations by Participant",
+       subtitle = "Across senses shared by all participants")
+
+sense_estimations.df %>% mutate(num_aoa = as.numeric(aoa)) %>% filter(participant_id %in% random_participants) %>% 
+  ggplot(aes(y = num_aoa, x = participant_id,  fill = participant_id)) + 
+  geom_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5, adjust = 1.5) + coord_flip() + 
+  geom_point(aes(color = participant_id), 
+             position = position_jitter(height = .25, width = .1), 
+             size = .5,
+             alpha = .5) + 
+  #geom_boxplot(width = .1, outlier.shape = NA, alpha = .5) + 
+  theme_classic() +
+  scale_x_reordered()+
+  labs(y = "AoA Estimation",
+       x = NULL,
+       title = "Distribution of Estimations by Participant",
+       subtitle = "Across all senses")
+```
+
+```{r}
+target_lemmas <- c("pumpkin", "carrots", "strawberry", "apple", "banana")
+#target_lemmas <- sample(unique(sense_estimations.df$lemma), 5)
+#gonna try adding the lemma info >:)
+target_estimations_with_mean <- sense_estimations.df%>% select(group, lemma, sense_name, aoa) %>%
+  rbind(lemma_estimations.df %>% mutate(sense_name = "lemma") %>% select(group, lemma, sense_name, aoa)) %>%
+  filter(lemma %in% target_lemmas) %>% 
+  mutate(num_aoa = as.numeric(aoa))  %>%
+  filter(!is.na(num_aoa)) %>%
+  group_by(sense_name, lemma) %>% mutate(mean_aoa = mean(num_aoa, rm.na = TRUE),
+                                         sd_aoa = sd(num_aoa)) %>% ungroup() %>%
+  mutate(mean_aoa = ifelse(sense_name == "lemma", 0, mean_aoa),
+         lemma_bool = ifelse(sense_name == "lemma", TRUE, FALSE),
+         sense_name = reorder_within(sense_name, - mean_aoa, lemma))
+
+target_estimations_with_mean %>% ggplot(aes(y = num_aoa, x = sense_name,  fill = lemma)) + 
+  geom_flat_violin(position = position_nudge(x = 0, y = 0), adjust = 1.5, alpha = .25) + coord_flip() + 
+  geom_point(aes(color = lemma), 
+             position = position_jitter(height = .25, width = .1), 
+             size = .5,
+             alpha = .1) + 
+  #geom_boxplot(width = .1, outlier.shape = NA, alpha = .5) + 
+  theme_classic() +
+  scale_x_reordered() + facet_grid(rows = vars(lemma), scales = "free_y", space='free') +
+  labs(y = "AoA Estimation",
+       x = NULL,
+       title = "Sense AoA Distrbutions",
+       subtitle = "Across senses shared by all participants") + 
+  scale_alpha_manual(values = c(.5, 1))# + scale_x_discrete(expand = c(0.01, 0)) 
+```

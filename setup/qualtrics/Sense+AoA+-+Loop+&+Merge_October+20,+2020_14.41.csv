@@ -1,0 +1,9 @@
+startDate,endDate,status,ipAddress,progress,duration,finished,recordedDate,_recordId,recipientLastName,recipientFirstName,recipientEmail,externalDataReference,locationLatitude,locationLongitude,distributionChannel,userLanguage
+Start Date,End Date,Response Type,IP Address,Progress,Duration (in seconds),Finished,Recorded Date,Response ID,Recipient Last Name,Recipient First Name,Recipient Email,External Data Reference,LocationLatitude - Location Latitude,LocationLongitude - Location Longitude,DistributionChannel - Distribution Channel,UserLanguage - User Language
+2020-10-20 13:12:17,2020-10-20 13:13:19,Survey Preview,,100,61,True,2020-10-20 13:13:20,R_9ubPlSBocaSILJf,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 13:29:23,2020-10-20 13:30:22,Survey Preview,,100,58,True,2020-10-20 13:30:22,R_2wB1UBgIVgMxrcm,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 13:30:28,2020-10-20 13:31:05,Survey Preview,,100,36,True,2020-10-20 13:31:05,R_1ITu8G59vJAd6Uf,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 13:35:22,2020-10-20 13:36:38,Survey Preview,,100,75,True,2020-10-20 13:36:39,R_2RVYT74IjFj06Oa,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 14:28:17,2020-10-20 14:30:11,Survey Preview,,100,114,True,2020-10-20 14:30:12,R_2uwHvIFAOsLyUGy,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 14:32:23,2020-10-20 14:34:45,Survey Preview,,100,142,True,2020-10-20 14:34:46,R_12nnrUrfafpUVhA,,,,,33.9167938232421875,-118.34320068359375,preview,EN
+2020-10-20 14:37:10,2020-10-20 14:38:59,IP Address,172.90.206.3,100,109,True,2020-10-20 14:38:59,R_3pfNDMOz5yLfCMw,,,,,33.9167938232421875,-118.34320068359375,anonymous,EN

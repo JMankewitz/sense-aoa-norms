@@ -1,0 +1,164 @@
+---
+title: "01_preprocess"
+author: "Jessica Mankewitz"
+date: "2/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This markdown does a few larget preprocessing steps to convert the qualtrics into multiple tidy dataframes
+
+It takes in a qualtrics file and returns
+1) A dataframe + csv of each participant's demographic and misc information
+2) A dataframe + csv of by-lemma estimations (Kuperman replication)
+3) A dataframe + csv of by-sense estimations
+4) A dataframe of by participant attention checks
+
+# Setup
+```{r}
+library(here)
+library(stringr)
+library(janitor)
+library(tidyverse)
+
+read_path <- here("data/raw_data/")
+write_path <- here("data/processed_data/")
+```
+
+```{r message=FALSE}
+prolific_pilot_qualtrics.df <- read_csv(paste0(read_path, "prolific_calibration_pilot_b.csv"))
+sp_pilot_qualtrics.df <- read_csv(paste0(read_path, "sp_calibration_pilot_b.csv"))
+sp_qualtrics.df <- read_csv(paste0(read_path, "sp_full_run.csv"))
+```
+
+# Demographics
+```{r}
+get_demographics <- function(qualtrics_df){
+  demo.df <- qualtrics_df %>% select(study_name:hidden_senses_DO, participant_num, -hidden_senses, difficulty:participant_num) %>%
+  filter(participant_num >= 0) %>%
+  janitor::clean_names() %>%
+  rename(eng_first_lang = eng_1,
+         gender_desc = gender_3_text,
+         block_order = hidden_senses_do,
+         sneaker_example_1 = sneaker_aoa_1,
+         sneaker_example_2 = sneaker_aoa_6)
+return(demo.df)
+}
+
+demographics.df <- prolific_pilot_qualtrics.df %>% get_demographics() %>%
+  rbind(sp_pilot_qualtrics.df %>% get_demographics()) %>%
+  rbind(sp_qualtrics.df %>% get_demographics()) 
+
+demographics.df %>%
+  write_csv(paste0(write_path, "demographics.csv"))
+```
+
+# Core Preprocessing
+
+This will have a two major steps
+1) Convert from wide to long to prepare for matching
+2) Match the qualtrics descriptions to the senses
+
+```{r}
+wide_to_long_questions <- function (target_qualtrics){
+  target_questions <- target_qualtrics %>% 
+  janitor::clean_names() %>% 
+  select(-c(duration_in_seconds:hidden_senses_do), -c(difficulty:participant_num))
+
+target_questions_extra_info <- target_questions[0:1,] %>% select(c(-study_name, participant_id)) %>%
+  pivot_longer(everything())
+
+target_questions_longer <- target_questions[-c(0:2),] %>% 
+  pivot_longer(-c(study_name, participant_id)) %>% 
+  rename(aoa = value) %>%
+  filter(!is.na(aoa)) %>%
+  left_join(target_questions_extra_info) %>%
+  rename(qualtrics_code = name, full_question = value) %>%
+  mutate(sense_group = str_extract(full_question, pattern = "(?<=\\- ).*(?=\\ -)"),
+         lemma_group = str_extract(full_question, pattern = "[^-]*"),
+         group = ifelse(is.na(sense_group), lemma_group, sense_group),
+         field = str_match(full_question, pattern = "(?<=\\- \\[).*?(?=\\])")) %>%
+  select(-c(sense_group, lemma_group)) %>%
+  filter(!grepl("hid_num_fields", qualtrics_code))
+return(target_questions_longer)
+}
+
+all_studies_long <- prolific_pilot_qualtrics.df %>% wide_to_long_questions() %>%
+  rbind(sp_pilot_qualtrics.df %>% wide_to_long_questions()) %>%
+  rbind(sp_qualtrics.df %>% wide_to_long_questions())
+```
+Match to the csv fed into qualtrics
+```{r warning=FALSE}
+qualtrics_groups <- read_csv(here("setup/qualtrics_data/qualtrics.csv")) %>%
+  rbind(read_csv(here("setup/qualtrics_data/attn_calib_qualtrics_df.csv"))) %>%
+  rename(group = group_id, 
+         "Field-3" = "1", "Field-4" = "2", "Field-5" = "3", "Field-6" = "4", "Field-7" = "5") %>% 
+  pivot_longer(cols= c("Field-3":"Field-7")) %>%
+  rename(field = name, prompt = value)
+
+joined_questions <- all_studies_long %>% left_join(qualtrics_groups)
+
+sense_examples <- read_csv(here("setup/final_sense_examples.csv")) %>% rename(group = group_id)
+
+wordnet_info_joined.df <- joined_questions %>% 
+  #mull out examples and definitions from the qualtrics prompt
+  mutate(definition = str_trim(str_match(prompt, pattern = "[^<]*")),
+         example = str_trim(str_match(prompt, pattern = "(?<=\\(Example: ).*?(?=\\)\\<)"))) %>% 
+  #use these examples and definitions to match in the wordnet sense information
+  left_join(sense_examples %>% 
+              mutate(definition = str_trim(definition),
+                     example = str_trim(example)) %>% 
+              select(-group, -lemma)) %>% 
+  mutate(orig_aoa = aoa, 
+         aoa = ifelse(orig_aoa == "X", "x", orig_aoa)) %>%
+  distinct()
+```
+
+# Recode large AoAs -> IDK
+This is a replication of kuperman and the bristol norms. We'll assume that any value > the participants age is either a mistake or another representation fo "I don't know this sense/word"
+
+```{r}
+# Pull out the current idk
+idk_resps.df <- wordnet_info_joined.df %>% filter(aoa == "x")
+
+aoa_resps.df <- wordnet_info_joined.df %>% filter(aoa != "x") %>%
+  mutate(aoa = as.numeric(aoa)) %>%
+  left_join(demographics.df %>% select(participant_id, age))
+
+wordnet_info_rejoined.df <- aoa_resps.df %>% mutate(aoa = ifelse(aoa > as.numeric(age), "x", aoa)) %>% select(-age) %>% rbind(idk_resps.df)
+```
+
+
+# Split into CSVs
+```{r}
+sense_estimations.df <- wordnet_info_rejoined.df %>%
+  filter(!grepl("lemma", qualtrics_code), !grepl("This question is to ensure", prompt)) %>%
+  select(study_name, participant_id, lemma, sense_name, definition, example, aoa, everything())
+
+sense_estimations.df %>% write_csv(file = paste0(write_path, "raw_sense_estimations.csv"))
+
+lemma_estimations.df <- wordnet_info_rejoined.df %>%
+  filter(grepl("lemma", qualtrics_code), !grepl("This question is to ensure", prompt)) %>%
+  mutate(group = str_trim(group)) %>%
+  select(study_name:group) %>%
+  left_join(qualtrics_groups %>% select(group, lemma) %>% distinct())
+
+lemma_estimations.df %>% write_csv(file = paste0(write_path, "raw_lemma_estimations.csv"))
+
+attention_checks.df <- wordnet_info_rejoined.df %>%
+  filter(!grepl("lemma", qualtrics_code), grepl("This question is to ensure", prompt))
+
+attention_checks.df %>% write_csv(file = paste0(write_path, "raw_attention_checks.csv"))
+```
+
+# 
+
+
+```{r}
+
+```
+
+
